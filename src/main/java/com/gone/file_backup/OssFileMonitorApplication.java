@@ -1,10 +1,9 @@
 package com.gone.file_backup;
 
-import com.gone.file_backup.rsync.RsyncServer;
-import com.gone.file_backup.rsync.network.channel.PooledChannelManager;
-import com.gone.file_backup.rsync.network.handler.ChannelOperationHandler;
-import com.gone.file_backup.rsync.schedule.RetryTask;
-import com.gone.file_backup.rsync.sender.Sender;
+import com.gone.file_backup.network.channel.PooledChannelManager;
+import com.gone.file_backup.network.handler.ChannelOperationHandler;
+import com.gone.file_backup.schedule.RetryTask;
+import com.gone.file_backup.sender.Sender;
 import org.springframework.boot.SpringApplication;
 import org.springframework.boot.autoconfigure.SpringBootApplication;
 import org.springframework.context.ConfigurableApplicationContext;

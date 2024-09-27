@@ -1,8 +1,8 @@
 package com.gone.file_backup.controller;
 
-import com.gone.file_backup.rsync.generator.DefaultGeneratorImpl;
-import com.gone.file_backup.rsync.model.FileMetaInfo;
-import com.gone.file_backup.rsync.sender.Sender;
+import com.gone.file_backup.generator.DefaultGeneratorImpl;
+import com.gone.file_backup.model.FileMetaInfo;
+import com.gone.file_backup.sender.Sender;
 import lombok.Data;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.web.bind.annotation.PostMapping;
@@ -30,12 +30,17 @@ public class BackTaskController {
     @PostMapping("/newAndRun")
     public void newAndRun(@RequestBody NewTaskBO taskBO) {
 
-        DefaultGeneratorImpl generator = new DefaultGeneratorImpl(taskBO.getLocalDirectory(), taskBO.getRemoteDirectory());
+        DefaultGeneratorImpl generator = new DefaultGeneratorImpl(
+                taskBO.getRemoteIp(),
+                taskBO.getRemotePort(),
+                taskBO.getLocalDirectory(),
+                taskBO.getRemoteDirectory(),
+                sender
+        );
         List<FileMetaInfo> fileMetaInfos = generator.generateFileList();
-
         sender.syncFileList(taskBO.getRemoteIp(), taskBO.getRemotePort(), fileMetaInfos);
-
         generator.detectFileListChange();
+
     }
 
 }
