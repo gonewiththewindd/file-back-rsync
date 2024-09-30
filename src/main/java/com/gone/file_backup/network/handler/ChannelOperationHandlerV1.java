@@ -1,10 +1,10 @@
 package com.gone.file_backup.network.handler;
 
-import com.gone.file_backup.network.NetworkConstants;
+import com.gone.file_backup.constants.NetworkConstants;
 import com.gone.file_backup.network.OptCodeEnums;
 import com.gone.file_backup.network.frame.*;
 import com.gone.file_backup.receiver.Receiver;
-import com.gone.file_backup.sender.Sender;
+import com.gone.file_backup.sender.SenderAckAbility;
 import io.netty.buffer.ByteBuf;
 import io.netty.channel.ChannelHandler;
 import io.netty.channel.ChannelHandlerContext;
@@ -18,17 +18,12 @@ import java.util.Objects;
 
 @Component
 @ChannelHandler.Sharable
-public class ChannelOperationHandler extends SimpleChannelInboundHandler<ByteBuf> {
+public class ChannelOperationHandlerV1 extends SimpleChannelInboundHandler<ByteBuf> {
 
     @Autowired
     private Receiver receiver;
     @Autowired
-    private Sender sender;
-
-    public ChannelOperationHandler(Receiver receiver, Sender sender) {
-        this.receiver = receiver;
-        this.sender = sender;
-    }
+    private SenderAckAbility senderAck;
 
     @Override
     protected void channelRead0(ChannelHandlerContext ctx, ByteBuf msg) {
@@ -41,48 +36,51 @@ public class ChannelOperationHandler extends SimpleChannelInboundHandler<ByteBuf
             return;
         }
         // TODO crc校验失败，丢弃包，依赖远程重试机制
-
-        switch (opt.getOptCode()) {
+        if (opt.getOptCode() < 0) {
+            senderAck.retryMap().remove(opt.getOptId());
+        }
+        OptCodeEnums optCodeEnums = OptCodeEnums.of(opt.getOptCode());
+        switch (optCodeEnums) {
             case FILE_META_INFO:
                 receiver.processMetaInfoOpt((MetaInfoFrame) opt);
                 break;
             case FILE_META_INFO_ACK:
-                sender.receiveMetaInfoAck((MetaInfoAckFrame) opt);
+                senderAck.receiveMetaInfoAck((MetaInfoAckFrame) opt);
                 break;
-            case FILE_DATA_PART_TRANSPORT:
+            case FILE_DATA_PART:
                 receiver.processFileDataOpt((FileDataPartFrame) opt);
                 break;
-            case FILE_DATA_PART_TRANSPORT_ACK:
-                sender.processFileDataPartAck((FileDataPartAckFrame) opt);
+            case FILE_DATA_PART_ACK:
+                senderAck.processFileDataPartAck((FileDataPartAckFrame) opt);
                 break;
-            case FILE_DATA_TRANSPORT_FINISH:
+            case FILE_DATA_FINISH:
                 receiver.processFileDataFinishOpt((FileDataFinishFrame) opt);
                 break;
-            case FILE_DATA_TRANSPORT_FINISH_ACK:
-                sender.processFileDataFinishAck((FileDataFinishAckFrame) opt);
+            case FILE_DATA_FINISH_ACK:
+                senderAck.processFileDataFinishAck((FileDataFinishAckFrame) opt);
                 break;
-            case FULL_SYNC_FINISH:
-                receiver.processFullSyncFinishOpt((FullSyncFinishFrame) opt);
-                break;
-            case FULL_SYNC_FINISH_ACK:
-                sender.processFullSyncFinishAck(opt);
-                break;
+//            case FULL_SYNC_FINISH:
+//                receiver.processFullSyncFinishOpt((FullSyncFinishFrame) opt);
+//                break;
+//            case FULL_SYNC_FINISH_ACK:
+//                sender.processFullSyncFinishAck(opt);
+//                break;
             case FILE_SLICE_INFO:
                 receiver.processFileSliceInfo((FileSliceInfoFrame) opt);
                 break;
             case FILE_SLICE_INFO_ACK:
-                sender.processFileSliceInfoAck((FileSliceInfoAckFrame) opt);
+                senderAck.processFileSliceInfoAck((FileSliceInfoAckFrame) opt);
                 break;
-            case FILE_RECONSTRUCT_LIST_TRANSPORT:
-                receiver.processReconstructList((FileReconstructListFrame) opt);
+            case FILE_RECONSTRUCT_BLOCKS:
+                receiver.processReconstructList((FileReconstructBlocksFrame) opt);
                 break;
-            case FILE_RECONSTRUCT_LIST_TRANSPORT_ACK:
-                sender.processFileReconstructListAck(opt);
+            case FILE_RECONSTRUCT_BLOCKS_ACK:
+                senderAck.processFileReconstructListAck(opt);
                 break;
-            case FILE_RECONSTRUCT_LIST_TRANSPORT_FINISH:
+            case FILE_RECONSTRUCT:
                 receiver.processFileReconstructListTransportFinish((FileReconstructFrame) opt);
                 break;
-            case FILE_RECONSTRUCT_LIST_TRANSPORT_FINISH_ACK:
+            case FILE_RECONSTRUCT_ACK:
                 // ignore
                 break;
         }
@@ -100,16 +98,16 @@ public class ChannelOperationHandler extends SimpleChannelInboundHandler<ByteBuf
             case FILE_META_INFO_ACK -> {
                 opt = MetaInfoAckFrame.parse(buf);
             }
-            case FILE_DATA_PART_TRANSPORT -> {
+            case FILE_DATA_PART -> {
                 opt = FileDataPartFrame.parse(buf);
             }
-            case FILE_DATA_PART_TRANSPORT_ACK -> {
+            case FILE_DATA_PART_ACK -> {
                 opt = FileDataPartAckFrame.parse(buf);
             }
-            case FILE_DATA_TRANSPORT_FINISH -> {
+            case FILE_DATA_FINISH -> {
                 opt = FileDataFinishFrame.parse(buf);
             }
-            case FILE_DATA_TRANSPORT_FINISH_ACK -> {
+            case FILE_DATA_FINISH_ACK -> {
                 opt = FileDataFinishAckFrame.parse(buf);
             }
 /*            case FULL_SYNC_FINISH -> {
@@ -124,17 +122,14 @@ public class ChannelOperationHandler extends SimpleChannelInboundHandler<ByteBuf
             case FILE_SLICE_INFO_ACK -> {
                 opt = FileSliceInfoAckFrame.parse(buf);
             }
-            case FILE_RECONSTRUCT_LIST_TRANSPORT -> {
-                opt = FileReconstructListFrame.parse(buf);
+            case FILE_RECONSTRUCT_BLOCKS -> {
+                opt = FileReconstructBlocksFrame.parse(buf);
             }
-            case FILE_RECONSTRUCT_LIST_TRANSPORT_ACK -> {
+            case FILE_RECONSTRUCT_BLOCKS_ACK, FILE_RECONSTRUCT_ACK -> {
                 opt = OperationBaseFrame.parse(buf);
             }
-            case FILE_RECONSTRUCT_LIST_TRANSPORT_FINISH -> {
+            case FILE_RECONSTRUCT -> {
                 opt = FileReconstructFrame.parse(buf);
-            }
-            case FILE_RECONSTRUCT_LIST_TRANSPORT_FINISH_ACK -> {
-                opt = OperationBaseFrame.parse(buf);
             }
         }
 

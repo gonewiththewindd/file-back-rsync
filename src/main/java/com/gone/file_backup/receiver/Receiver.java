@@ -12,11 +12,9 @@ public interface Receiver {
 
     void processFullSyncFinishOpt(FullSyncFinishFrame opt);
 
-    void executeOpt(Opt opt, OperationBaseFrame optBO);
-
     void processFileSliceInfo(FileSliceInfoFrame opt);
 
-    void processReconstructList(FileReconstructListFrame opt);
+    void processReconstructList(FileReconstructBlocksFrame opt);
 
     void processFileReconstructListTransportFinish(FileReconstructFrame opt);
 }

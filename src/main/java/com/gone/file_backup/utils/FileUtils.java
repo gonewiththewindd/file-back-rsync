@@ -43,7 +43,7 @@ public class FileUtils {
         // 这样可能出现的情况就是线程和线程相邻的区域割裂，导致潜在的命中块降低，最坏的情况就是N个块都属于命中块
         long length = deltaPath.toFile().length();
         int BLOCK_SIZE = sliceFile.getBlockSize();
-        int bufferSize = BLOCK_SIZE * 1024;
+        int bufferSize = 1024 * BLOCK_SIZE;
         byte[] buffer = loadBytes(deltaPath, 0, bufferSize);
         int bufferOffset = 0;// 当前缓冲区在文件中的偏移量
         int current = 0;// 当前文件的比较字节下标, buffer的索引下标 =  current - bufferOffset
@@ -52,7 +52,7 @@ public class FileUtils {
                 .collect(Collectors.groupingBy(block -> block.getChecksum().getS()));
         for (; current < length - BLOCK_SIZE; ) {
             int bufferIndex = current - bufferOffset;
-            if (bufferIndex > bufferSize - BLOCK_SIZE) {
+            if (bufferIndex > bufferSize - BLOCK_SIZE) { // 缓冲剩余字节不足一个块，需要加载更多字节
                 buffer = loadBytes(deltaPath, current - 1, bufferSize);
                 bufferOffset = current - 1;
             }
@@ -176,6 +176,9 @@ public class FileUtils {
                         bufferedWriter.write(((ModifyByteSerial) fb).getContent());
                     } else {
                         MatchedFileBlock mfb = (MatchedFileBlock) fb;
+                        if (Objects.isNull(mfb)) {//重试可能导致文件多次重构，每一次重构块id都会重新生成，导致后续匹配不上，这种情况下就不继续处理了
+                            return null;
+                        }
                         FileBlock fileBlock = fileBlockMap.get(mfb.getId());
                         randomAccessFile.seek(fileBlock.getFrom());
 
@@ -191,8 +194,7 @@ public class FileUtils {
         }
     }
 
-
-    public static SliceFile slice(String fid, String path) {
+    public static SliceFile slice(String path) {
         long start = System.currentTimeMillis();
         Path path1 = Paths.get(path);
         File file = path1.toFile();
@@ -206,15 +208,15 @@ public class FileUtils {
                     to = (int) length;
                 }
                 byte[] content = new byte[to - from];
-                bufferedInputStream.read(content, 0, blockSize);
+                bufferedInputStream.read(content, 0, content.length);
                 FileBlock fileBlock = new FileBlock()
                         .setId(UUIDUtils.randomUUID())
                         .setIndex(index++);
                 fileBlock.setFrom(from);
                 fileBlock.setTo(to);
-                fileBlock.setChecksum(SignatureUtils.checksum(content, from, content.length, 0));
+                fileBlock.setChecksum(SignatureUtils.checksum(content, from, content.length, from));
                 fileBlock.setMd5(DigestUtils.md5DigestAsHex(content));
-                fileBlock.setContent(content);
+//                fileBlock.setContent(content);
                 fileBlocks.add(fileBlock);
             }
         } catch (FileNotFoundException e) {
@@ -223,8 +225,12 @@ public class FileUtils {
             throw new RuntimeException(e);
         }
 
-        log.info("load and init file {} end in {} ms", path, System.currentTimeMillis() - start);
+        log.info("[Receiver]load and init file slice info {} end in {} ms, slice block count:{}, block size:{}", path, System.currentTimeMillis() - start, fileBlocks.size(), blockSize);
         return new SliceFile().setBlockSize(blockSize).setFileBlockList(fileBlocks);
+    }
+
+    public static String replaceFileRootPath(String filePath, String rootPath, String replacementRootPath) {
+        return filePath.replace(rootPath, replacementRootPath);
     }
 
 }

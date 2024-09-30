@@ -1,7 +1,9 @@
 package com.gone.file_backup;
 
-import com.gone.file_backup.network.NetworkConstants;
-import com.gone.file_backup.network.handler.ChannelOperationHandler;
+import com.gone.file_backup.constants.NetworkConstants;
+import com.gone.file_backup.network.handler.ChannelOperationHandlerV2;
+import com.gone.file_backup.network.handler.OperationDecoder;
+import com.gone.file_backup.network.handler.OperationEncoder;
 import io.netty.bootstrap.ServerBootstrap;
 import io.netty.buffer.Unpooled;
 import io.netty.channel.Channel;
@@ -18,9 +20,9 @@ import java.nio.charset.StandardCharsets;
 @Slf4j
 public class RsyncServer implements Runnable {
 
-    private ChannelOperationHandler optChannelHandler;
+    private ChannelOperationHandlerV2 optChannelHandler;
 
-    public RsyncServer(ChannelOperationHandler optChannelHandler) {
+    public RsyncServer(ChannelOperationHandlerV2 optChannelHandler) {
         this.optChannelHandler = optChannelHandler;
     }
 
@@ -35,14 +37,12 @@ public class RsyncServer implements Runnable {
             protected void initChannel(Channel ch) {
                 ch.pipeline().addLast(new DelimiterBasedFrameDecoder(
                                 128 * 1024,
-                                false,
                                 true,
-//                        Unpooled.wrappedBuffer(NetworkConstants.FRAME_HEAD.getBytes(StandardCharsets.UTF_8)),
+                                true,
                                 Unpooled.wrappedBuffer(NetworkConstants.FRAME_TAIL.getBytes(StandardCharsets.UTF_8)))
                 );
-//                ch.pipeline().addLast(new Base64Decoder());
-//
-//                ch.pipeline().addLast(new Base64Encoder());
+                ch.pipeline().addLast(new OperationDecoder());
+                ch.pipeline().addLast(new OperationEncoder());
                 ch.pipeline().addLast(optChannelHandler);
             }
         }).childOption(ChannelOption.SO_KEEPALIVE, true);

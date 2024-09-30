@@ -22,10 +22,12 @@ public class DefaultGeneratorImpl implements Generator {
     private int port;
     private File directory;
     private String destDirectory;
-    private Map<String, FileMetaInfo> latestFileMetaInfoMap = new HashMap<>();
+    private Map<String, FileMetaInfo> lastFileMetaInfoMap = new HashMap<>();
     private Sender sender;
 
     public DefaultGeneratorImpl(String ip, int port, String directory, String destDirectory, Sender sender) {
+        this.ip = ip;
+        this.port = port;
         this.directory = Paths.get(directory).toFile();
         this.destDirectory = destDirectory;
         this.sender = sender;
@@ -38,14 +40,7 @@ public class DefaultGeneratorImpl implements Generator {
     public List<FileMetaInfo> generateFileList() {
         log.info("[Generator]Generate file list...");
         List<FileMetaInfo> fileMetaInfos = doGenerateFileList(this.directory, true, true);
-        fileMetaInfos.forEach(f -> {
-            // 设置相对路径
-            int parentIndex = f.getAbsolutePath().indexOf(this.directory.getAbsolutePath());
-            String relativeFilename = f.getAbsolutePath().substring(parentIndex + this.directory.getAbsolutePath().length());
-//            String relativePath = relativeFilename.replace(f.getName(), "");
-            f.setDestPath(this.destDirectory.concat(relativeFilename));
-        });
-        this.latestFileMetaInfoMap = fileMetaInfos.stream()
+        this.lastFileMetaInfoMap = fileMetaInfos.stream()
                 .collect(Collectors.toMap(FileMetaInfo::getAbsolutePath, v -> v));
         return fileMetaInfos;
     }
@@ -65,7 +60,8 @@ public class DefaultGeneratorImpl implements Generator {
                         .setName(name)
                         .setLength(length)
                         .setLastModified(l)
-                        .setAbsolutePath(absolutePath);
+                        .setAbsolutePath(absolutePath)
+                        .setDestPath(FileUtils.replaceFileRootPath(absolutePath, this.directory.getAbsolutePath(), destDirectory));
                 if (initFid) {
                     String fid = UUIDUtils.randomUUID();
                     fileMetaInfo.setFid(fid);
@@ -82,18 +78,18 @@ public class DefaultGeneratorImpl implements Generator {
 
     @Override
     public void detectFileListChange() {
-
-        List<FileMetaInfo> filesUnderDirectory = doGenerateFileList(this.directory, false, false);
-        filesUnderDirectory.forEach(f -> {
-            if (this.latestFileMetaInfoMap.containsKey(f.getAbsolutePath())) {
-                FileMetaInfo fileMetaInfo = this.latestFileMetaInfoMap.get(f.getAbsolutePath());
+        log.info("[Generator-Task]detect file change...");
+        List<FileMetaInfo> latestFileMetaInfoMap = doGenerateFileList(this.directory, false, false);
+        latestFileMetaInfoMap.forEach(f -> {
+            if (this.lastFileMetaInfoMap.containsKey(f.getAbsolutePath())) {
+                FileMetaInfo fileMetaInfo = this.lastFileMetaInfoMap.get(f.getAbsolutePath());
                 f.setFid(fileMetaInfo.getFid());
                 f.setMd5(fileMetaInfo.getMd5());
             }
         });
         // 新增文件列表
-        List<FileMetaInfo> newFileList = filesUnderDirectory.stream()
-                .filter(fm -> !this.latestFileMetaInfoMap.containsKey(fm.getAbsolutePath()))
+        List<FileMetaInfo> newFileList = latestFileMetaInfoMap.stream()
+                .filter(fm -> !this.lastFileMetaInfoMap.containsKey(fm.getAbsolutePath()))
                 .collect(Collectors.toList());
         if (CollectionUtils.isNotEmpty(newFileList)) {
             // 同步新增文件列表信息
@@ -101,15 +97,16 @@ public class DefaultGeneratorImpl implements Generator {
                 newFile.setFid(UUIDUtils.randomUUID());
                 newFile.setMd5(SignatureUtils.computeMD5(newFile.getAbsolutePath()));
             });
-            log.info("[Generator]detect new file created, file list:{}", fileNames(newFileList));
+            log.info("[Generator]detect new file created in directory '{}', file list:{}", directory, fileNames(newFileList));
             sender.syncFileList(ip, port, newFileList);
         }
         // 被修改文件列表
-        List<FileMetaInfo> modifiedFileList = filesUnderDirectory.stream()
-                .filter(fm -> this.latestFileMetaInfoMap.containsKey(fm.getAbsolutePath()))
-                .filter(cur -> fileHasChange(cur, latestFileMetaInfoMap.get(cur.getAbsolutePath())))
+        List<FileMetaInfo> modifiedFileList = latestFileMetaInfoMap.stream()
+                .filter(fm -> this.lastFileMetaInfoMap.containsKey(fm.getAbsolutePath()))
+                .filter(cur -> fileHasChange(cur, lastFileMetaInfoMap.get(cur.getAbsolutePath())))
                 .collect(Collectors.toList());
         if (CollectionUtils.isNotEmpty(modifiedFileList)) {
+            log.warn("[Generator]detect file under directory '{}' changed, file list:{}", directory, fileNames(newFileList));
             modifiedFileList.forEach(modifiedFile -> {
                 String newMD5 = SignatureUtils.computeMD5(modifiedFile.getAbsolutePath());
                 if (modifiedFile.getMd5().equalsIgnoreCase(newMD5)) {
@@ -130,7 +127,7 @@ public class DefaultGeneratorImpl implements Generator {
         }
 
         // 更新客户端文件列表信息
-        this.latestFileMetaInfoMap = filesUnderDirectory.stream()
+        this.lastFileMetaInfoMap = latestFileMetaInfoMap.stream()
                 .collect(Collectors.toMap(FileMetaInfo::getAbsolutePath, v -> v));
 
     }

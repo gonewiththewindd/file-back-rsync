@@ -2,8 +2,7 @@ package com.gone.file_backup.network.frame;
 
 import com.alibaba.fastjson2.JSON;
 import com.gone.file_backup.model.SliceFile;
-import com.gone.file_backup.network.NetworkConstants;
-import com.gone.file_backup.network.OptCodeEnums;
+import com.gone.file_backup.constants.NetworkConstants;
 import io.netty.buffer.ByteBuf;
 import lombok.Data;
 import lombok.experimental.Accessors;
@@ -16,8 +15,8 @@ public class FileSliceInfoAckFrame extends OperationBaseFrame {
 
     private SliceFile sliceFile;
 
-    private FileSliceInfoAckFrame() {
-        super.optCode = OptCodeEnums.FILE_SLICE_INFO;
+    public FileSliceInfoAckFrame() {
+
     }
 
     public static FileSliceInfoAckFrame parse(ByteBuf buf) {
@@ -26,8 +25,8 @@ public class FileSliceInfoAckFrame extends OperationBaseFrame {
 
         CharSequence head = buf.readCharSequence(NetworkConstants.FRAME_HEAD.length(), StandardCharsets.UTF_8);
         int optCode = buf.readInt();
-        CharSequence oid = buf.readCharSequence(32, StandardCharsets.UTF_8);
-        CharSequence sid = buf.readCharSequence(32, StandardCharsets.UTF_8);
+        CharSequence contextId = buf.readCharSequence(32, StandardCharsets.UTF_8);
+        CharSequence otpId = buf.readCharSequence(32, StandardCharsets.UTF_8);
         int length = buf.readInt();
         if (length > 0) {
             CharSequence json = buf.readCharSequence(length, StandardCharsets.UTF_8);
@@ -36,8 +35,9 @@ public class FileSliceInfoAckFrame extends OperationBaseFrame {
         long crc = buf.readLong();
         CharSequence tail = buf.readCharSequence(NetworkConstants.FRAME_TAIL.length(), StandardCharsets.UTF_8);
 
-        fileSliceInfoAckFrame.setContextId(sid.toString());
-        fileSliceInfoAckFrame.setOptId(oid.toString());
+        fileSliceInfoAckFrame.setOptCode(optCode);
+        fileSliceInfoAckFrame.setContextId(contextId.toString());
+        fileSliceInfoAckFrame.setOptId(otpId.toString());
         fileSliceInfoAckFrame.setCrc(crc);
 
         return fileSliceInfoAckFrame;

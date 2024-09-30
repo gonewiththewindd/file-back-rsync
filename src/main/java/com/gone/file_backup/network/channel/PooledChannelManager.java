@@ -1,6 +1,6 @@
 package com.gone.file_backup.network.channel;
 
-import com.gone.file_backup.network.handler.ChannelOperationHandler;
+import com.gone.file_backup.network.handler.ChannelOperationHandlerV2;
 import com.gone.file_backup.network.handler.SimpleChannelPoolHandler;
 import com.gone.file_backup.sender.Sender;
 import io.netty.bootstrap.Bootstrap;
@@ -25,7 +25,7 @@ import java.util.function.Function;
 public class PooledChannelManager {
 
     @Autowired
-    private ChannelOperationHandler channelOperationHandler;
+    private ChannelOperationHandlerV2 channelOperationHandler;
 
     private Map<String, ChannelPool> channelPoolMap = new ConcurrentHashMap<>();
 

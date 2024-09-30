@@ -1,7 +1,6 @@
 package com.gone.file_backup.network.frame;
 
-import com.gone.file_backup.network.NetworkConstants;
-import com.gone.file_backup.network.OptCodeEnums;
+import com.gone.file_backup.constants.NetworkConstants;
 import io.netty.buffer.ByteBuf;
 import lombok.Data;
 import lombok.experimental.Accessors;
@@ -16,8 +15,8 @@ public class FullSyncFinishFrame extends OperationBaseFrame {
     private String syncId;
     private String remoteDirectory;
 
-    private FullSyncFinishFrame() {
-        super.optCode = OptCodeEnums.FULL_SYNC_FINISH;
+    public FullSyncFinishFrame() {
+
     }
 
     public static FullSyncFinishFrame of(String remoteDirectory) {
@@ -40,14 +39,15 @@ public class FullSyncFinishFrame extends OperationBaseFrame {
         long crc = buf.readLong();
         CharSequence tail = buf.readCharSequence(NetworkConstants.FRAME_TAIL.length(), StandardCharsets.UTF_8);
 
-        FullSyncFinishFrame metaInfoOpt = new FullSyncFinishFrame()
+        FullSyncFinishFrame fullSyncFinishFrame = new FullSyncFinishFrame()
                 .setSyncId(syncId.toString())
                 /*.setRemoteDirectory(directory.toString())*/;
-        metaInfoOpt.setOptId(contextId.toString());
-        metaInfoOpt.setContextId(optId.toString());
-        metaInfoOpt.setCrc(crc);
+        fullSyncFinishFrame.setOptCode(optCode);
+        fullSyncFinishFrame.setOptId(contextId.toString());
+        fullSyncFinishFrame.setContextId(optId.toString());
+        fullSyncFinishFrame.setCrc(crc);
 
-        return metaInfoOpt;
+        return fullSyncFinishFrame;
     }
 
 }

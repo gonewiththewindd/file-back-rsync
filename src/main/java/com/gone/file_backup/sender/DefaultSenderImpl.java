@@ -1,12 +1,14 @@
 package com.gone.file_backup.sender;
 
 import com.alibaba.fastjson2.JSON;
+import com.gone.file_backup.constants.NetworkConstants;
 import com.gone.file_backup.file.reconstruct.FileBlockTypeEnums;
 import com.gone.file_backup.file.reconstruct.MatchedFileBlock;
 import com.gone.file_backup.file.reconstruct.ModifyByteSerial;
 import com.gone.file_backup.file.reconstruct.ReconstructFileBlock;
 import com.gone.file_backup.model.*;
-import com.gone.file_backup.network.NetworkConstants;
+import com.gone.file_backup.model.retry.BufRetryMsg;
+import com.gone.file_backup.model.retry.RetryMsg;
 import com.gone.file_backup.network.OptCodeEnums;
 import com.gone.file_backup.network.channel.PooledChannelManager;
 import com.gone.file_backup.network.frame.*;
@@ -32,7 +34,6 @@ import java.util.ArrayList;
 import java.util.List;
 import java.util.Map;
 import java.util.Objects;
-import java.util.concurrent.ConcurrentHashMap;
 import java.util.concurrent.CountDownLatch;
 import java.util.concurrent.TimeUnit;
 import java.util.concurrent.atomic.AtomicInteger;
@@ -40,7 +41,7 @@ import java.util.stream.Collectors;
 
 @Slf4j
 @Component
-public class DefaultSenderImpl implements Sender {
+public class DefaultSenderImpl implements Sender, SenderAckAbility {
 
     public static final int BLOCK_SIZE = 1024 * 64;
 
@@ -48,12 +49,8 @@ public class DefaultSenderImpl implements Sender {
     @Autowired
     private PooledChannelManager pooledChannelManager;
 
-    /**
-     * 重试暂存
-     */
-    private Map<String, RetryMsg> retryMap = new ConcurrentHashMap<>();
-    private Map<String, AckResult> ackMap = new ConcurrentHashMap<>();
-    private Map<String, Object> continuteMap = new ConcurrentHashMap<>();
+    @Autowired
+    private SenderContext senderContext;
 
     @Override
     public void syncFileList(String ip, Integer port, List<FileMetaInfo> fileList) {
@@ -78,7 +75,7 @@ public class DefaultSenderImpl implements Sender {
 //                fullSyncFinishFrame.writeCharSequence(NetworkConstants.FRAME_TAIL, StandardCharsets.UTF_8);
 //
 //                RetryMsg retryMsg = new RetryMsg().setIp(ip).setPort(port).setBuf(fullSyncFinishFrame.copy()).setLastSendAt(System.currentTimeMillis());
-//                retryMap.put(optId, retryMsg);
+//                senderContext.retryMap.put(optId, retryMsg);
 //
 //                pooledChannelManager.executeOnChannelAcquire(ip, port, channel -> {
 //                    log.info("[Sender]send full sync finish opt, frame:{}", fullSyncFinishFrame);
@@ -99,7 +96,7 @@ public class DefaultSenderImpl implements Sender {
 
         log.info("[Sender]receive meta info ack...opt:{}", opt);
 
-        ContinueContext context = (ContinueContext) continuteMap.get(opt.getContextId());
+        ContinueContext context = (ContinueContext) senderContext.continuteMap.get(opt.getContextId());
         if (Objects.isNull(context)) {
             return;
         }
@@ -121,7 +118,7 @@ public class DefaultSenderImpl implements Sender {
                 // file frame
                 ByteBuf fileFrame = Unpooled.buffer();
                 fileFrame.writeCharSequence(NetworkConstants.FRAME_HEAD, StandardCharsets.UTF_8);
-                fileFrame.writeInt(OptCodeEnums.FILE_DATA_PART_TRANSPORT.getValue());
+                fileFrame.writeInt(OptCodeEnums.FILE_DATA_PART.getValue());
                 fileFrame.writeCharSequence(opt.getContextId(), StandardCharsets.UTF_8);
                 fileFrame.writeCharSequence(optId, StandardCharsets.UTF_8);
                 fileFrame.writeCharSequence(f.getFid(), StandardCharsets.UTF_8);
@@ -132,9 +129,9 @@ public class DefaultSenderImpl implements Sender {
                 fileFrame.writeLong(Crc32Utils.computeCrc32(fileFrame.array()));
                 fileFrame.writeCharSequence(NetworkConstants.FRAME_TAIL, StandardCharsets.UTF_8);
 
-                RetryMsg retryMsg = new RetryMsg().setIp(ip).setPort(port).setBuf(fileFrame.copy()).setLastSendAt(System.currentTimeMillis());
-                retryMap.put(optId, retryMsg); // TODO 过多的retry缓存，可以不缓存原始数据，原始数据在retry时再加载
-                ackMap.put(optId, AckResult.of(countDownLatch));
+                RetryMsg retryMsg = new BufRetryMsg().setBuf(fileFrame.copy()).setIp(ip).setPort(port).setLastSendAt(System.currentTimeMillis());
+                senderContext.retryMap.put(optId, retryMsg); // TODO 过多的retry缓存，可以不缓存原始数据，原始数据在retry时再加载
+                senderContext.ackMap.put(optId, AckResult.of(countDownLatch));
                 log.info("[Sender]transfer file {}, seq:{}, length:{}", f.getFid(), seq, length);
                 channel.writeAndFlush(fileFrame);
             }
@@ -144,15 +141,16 @@ public class DefaultSenderImpl implements Sender {
                 String optId = UUIDUtils.randomUUID();
                 ByteBuf fileDataFinishFrame = Unpooled.buffer();
                 fileDataFinishFrame.writeCharSequence(NetworkConstants.FRAME_HEAD, StandardCharsets.UTF_8);
-                fileDataFinishFrame.writeInt(OptCodeEnums.FILE_DATA_TRANSPORT_FINISH.getValue());
+                fileDataFinishFrame.writeInt(OptCodeEnums.FILE_DATA_FINISH.getValue());
                 fileDataFinishFrame.writeCharSequence(opt.getContextId(), StandardCharsets.UTF_8);
                 fileDataFinishFrame.writeCharSequence(optId, StandardCharsets.UTF_8);
                 fileDataFinishFrame.writeCharSequence(f.getFid(), StandardCharsets.UTF_8);
                 fileDataFinishFrame.writeLong(Crc32Utils.computeCrc32(fileDataFinishFrame.array()));
                 fileDataFinishFrame.writeCharSequence(NetworkConstants.FRAME_TAIL, StandardCharsets.UTF_8);
 
-                RetryMsg retryMsg = new RetryMsg().setIp(ip).setPort(port).setBuf(fileDataFinishFrame.copy()).setLastSendAt(System.currentTimeMillis());
-                retryMap.put(optId, retryMsg);
+                BufRetryMsg retryMsg = new BufRetryMsg().setBuf(fileDataFinishFrame.copy());
+                retryMsg.setIp(ip).setPort(port).setLastSendAt(System.currentTimeMillis());
+                senderContext.retryMap.put(optId, retryMsg);
                 log.info("[Sender]send file transport finish cmd, frame:{}", fileDataFinishFrame);
                 channel.writeAndFlush(fileDataFinishFrame);
             } else {
@@ -163,7 +161,7 @@ public class DefaultSenderImpl implements Sender {
         }
     }
 
-    private void syncFile(String ip, Integer port, FileMetaInfo f, CountDownLatch countDownLatch) {
+    public void syncFile(String ip, Integer port, FileMetaInfo f, CountDownLatch countDownLatch) {
 
         pooledChannelManager.executeOnChannelAcquire(ip, port, channel -> {
 
@@ -196,13 +194,13 @@ public class DefaultSenderImpl implements Sender {
                     .setPort(port)
                     .setContext(fileMetaInfoHolder);
 
-            continuteMap.put(contextId, continueContext);
-            RetryMsg retryMsg = new RetryMsg()
+            senderContext.continuteMap.put(contextId, continueContext);
+            RetryMsg retryMsg = new BufRetryMsg()
+                    .setBuf(metaInfoFrame.copy())
                     .setIp(ip)
                     .setPort(port)
-                    .setBuf(metaInfoFrame.copy())
                     .setLastSendAt(System.currentTimeMillis());
-            retryMap.put(optId, retryMsg);
+            senderContext.retryMap.put(optId, retryMsg);
 
             return null;
         });
@@ -211,7 +209,7 @@ public class DefaultSenderImpl implements Sender {
     @Override
     public void processFileDataPartAck(FileDataPartAckFrame opt) {
         log.info("[Sender]receive file data ack :{}", opt);
-        AckResult result = ackMap.remove(opt.getOptId());
+        AckResult result = senderContext.ackMap.remove(opt.getOptId());
         if (Objects.nonNull(result)) {
             result.getLatch().countDown();
         }
@@ -221,22 +219,25 @@ public class DefaultSenderImpl implements Sender {
     public void processFileDataFinishAck(FileDataFinishAckFrame opt) {
 
         log.info("[Sender]receive file data finish ack :{}", opt);
-        String syncId = opt.getSyncId();
         String fid = opt.getFid();
         boolean retry = opt.isRetry();
-        ContinueContext context = (ContinueContext) continuteMap.get(opt.getContextId());
+        ContinueContext context = (ContinueContext) senderContext.continuteMap.remove(opt.getContextId());
+        if (Objects.isNull(context)) {
+            return;
+        }
         FileMetaInfoHolder holder = (FileMetaInfoHolder) context.getContext();
         if (retry) {
             // 文件重传，读取最新文件，并重新生成文件元数据信息
-            log.info("[Sender]file data transport retry...syncId:{}, fid:{}", syncId, fid);
+            log.info("[Sender]file data transport retry...fid:{}, contextId:{}", fid, opt.getContextId());
             refreshFileMetaInfo(holder);
             String ip = context.getIp();
             int port = context.getPort();
+//            senderContext.continuteMap.remove(opt.getContextId());
             syncFile(ip, port, holder.getFileMetaInfo(), holder.getCountDownLatch());
         } else {
             // 清楚文件缓存信息
-            log.info("[Sender]file data transport finish, clear file meta info cache...syncId:{}, fid:{}, contextId:{}", syncId, fid, opt.getContextId());
-            continuteMap.remove(opt.getContextId());
+            log.info("[Sender]file data transport finish, clear file meta info cache...fid:{}, contextId:{}", fid, opt.getContextId());
+//            senderContext.continuteMap.remove(opt.getContextId());
             holder.getCountDownLatch().countDown();
         }
     }
@@ -252,19 +253,15 @@ public class DefaultSenderImpl implements Sender {
                 .setName(name)
                 .setLength(length)
                 .setLastModified(l)
+                .setDestPath(holder.getFileMetaInfo().getDestPath())
                 .setAbsolutePath(absolutePath);
         fileMetaInfo.setMd5(SignatureUtils.computeMD5(absolutePath));
         holder.setFileMetaInfo(fileMetaInfo);
     }
 
     @Override
-    public void processFullSyncFinishAck(OperationBaseFrame opt) {
-
-    }
-
-    @Override
     public Map<String, RetryMsg> retryMap() {
-        return retryMap;
+        return senderContext.retryMap;
     }
 
     @Override
@@ -285,9 +282,9 @@ public class DefaultSenderImpl implements Sender {
             fileSliceInfoFrame.writeLong(Crc32Utils.computeCrc32(fileSliceInfoFrame.array()));
             fileSliceInfoFrame.writeCharSequence(NetworkConstants.FRAME_TAIL, StandardCharsets.UTF_8);
 
-            RetryMsg retryMsg = new RetryMsg().setIp(ip).setPort(port).setBuf(fileSliceInfoFrame.copy()).setLastSendAt(System.currentTimeMillis());
-            ackMap.put(optId, AckResult.of(countDownLatch));
-            retryMap.put(optId, retryMsg);
+            RetryMsg retryMsg = new BufRetryMsg().setBuf(fileSliceInfoFrame.copy()).setIp(ip).setPort(port).setLastSendAt(System.currentTimeMillis());
+            senderContext.ackMap.put(optId, AckResult.of(countDownLatch));
+            senderContext.retryMap.put(optId, retryMsg);
 
             log.info("[Sender]send file slice info cmd, frame:{}", fileSliceInfoFrame);
             channel.writeAndFlush(fileSliceInfoFrame);
@@ -297,7 +294,7 @@ public class DefaultSenderImpl implements Sender {
 
         try {
             if (countDownLatch.await(10, TimeUnit.SECONDS)) {
-                AckResult ackResult = ackMap.remove(optId);
+                AckResult ackResult = senderContext.ackMap.remove(optId);
                 return (SliceFile) ackResult.getResult();
             } else {
                 log.error("[Sender]fetch file slice info cmd, timeout");
@@ -313,7 +310,7 @@ public class DefaultSenderImpl implements Sender {
     public void processFileSliceInfoAck(FileSliceInfoAckFrame opt) {
         log.info("[Sender]receive file slice info ack, frame:{}", opt);
         SliceFile sliceFile = opt.getSliceFile();
-        AckResult ackResult = ackMap.get(opt.getOptId());
+        AckResult ackResult = senderContext.ackMap.get(opt.getOptId());
         if (Objects.nonNull(ackResult)) {
             ackResult.setResult(sliceFile);
             ackResult.getLatch().countDown();
@@ -360,7 +357,7 @@ public class DefaultSenderImpl implements Sender {
                     String optId = UUIDUtils.randomUUID();
                     ByteBuf fileReconstructListFrame = Unpooled.buffer();
                     fileReconstructListFrame.writeCharSequence(NetworkConstants.FRAME_HEAD, StandardCharsets.UTF_8);
-                    fileReconstructListFrame.writeInt(OptCodeEnums.FILE_RECONSTRUCT_LIST_TRANSPORT.getValue());
+                    fileReconstructListFrame.writeInt(OptCodeEnums.FILE_RECONSTRUCT_BLOCKS.getValue());
                     fileReconstructListFrame.writeCharSequence(contextId, StandardCharsets.UTF_8);
                     fileReconstructListFrame.writeCharSequence(optId, StandardCharsets.UTF_8);
                     fileReconstructListFrame.writeInt(FileBlockTypeEnums.MATCHED.getValue());
@@ -369,9 +366,9 @@ public class DefaultSenderImpl implements Sender {
                     fileReconstructListFrame.writeLong(Crc32Utils.computeCrc32(fileReconstructListFrame.array()));
                     fileReconstructListFrame.writeCharSequence(NetworkConstants.FRAME_TAIL, StandardCharsets.UTF_8);
 
-                    RetryMsg retryMsg = new RetryMsg().setIp(ip).setPort(port).setBuf(fileReconstructListFrame.copy()).setLastSendAt(System.currentTimeMillis());
-                    retryMap.put(optId, retryMsg);
-                    ackMap.put(optId, AckResult.of(ackLatch));
+                    RetryMsg retryMsg = new BufRetryMsg().setBuf(fileReconstructListFrame.copy()).setIp(ip).setPort(port).setLastSendAt(System.currentTimeMillis());
+                    senderContext.retryMap.put(optId, retryMsg);
+                    senderContext.ackMap.put(optId, AckResult.of(ackLatch));
 
                     log.info("[Sender]send file reconstruct list. fid:{}, list size:{}", modifiedFile.getFid(), blocks.size());
                     channel.writeAndFlush(fileReconstructListFrame);
@@ -386,10 +383,12 @@ public class DefaultSenderImpl implements Sender {
                 String optId = UUIDUtils.randomUUID();
                 ByteBuf fileReconstructListFrame = Unpooled.buffer();
                 fileReconstructListFrame.writeCharSequence(NetworkConstants.FRAME_HEAD, StandardCharsets.UTF_8);
-                fileReconstructListFrame.writeInt(OptCodeEnums.FILE_RECONSTRUCT_LIST_TRANSPORT.getValue());
+                fileReconstructListFrame.writeInt(OptCodeEnums.FILE_RECONSTRUCT_BLOCKS.getValue());
                 fileReconstructListFrame.writeCharSequence(contextId, StandardCharsets.UTF_8);
                 fileReconstructListFrame.writeCharSequence(optId, StandardCharsets.UTF_8);
                 fileReconstructListFrame.writeInt(FileBlockTypeEnums.SERIAL.getValue());
+                fileReconstructListFrame.writeCharSequence(modifiedFile.getFid(), StandardCharsets.UTF_8);
+                fileReconstructListFrame.writeCharSequence(modifiedFile.getMd5(), StandardCharsets.UTF_8);
                 fileReconstructListFrame.writeInt(serial.getFrom());
                 fileReconstructListFrame.writeInt(serial.getTo());
                 fileReconstructListFrame.writeInt(serial.getContent().length);
@@ -397,9 +396,9 @@ public class DefaultSenderImpl implements Sender {
                 fileReconstructListFrame.writeLong(Crc32Utils.computeCrc32(fileReconstructListFrame.array()));
                 fileReconstructListFrame.writeCharSequence(NetworkConstants.FRAME_TAIL, StandardCharsets.UTF_8);
 
-                RetryMsg retryMsg = new RetryMsg().setIp(ip).setPort(port).setBuf(fileReconstructListFrame.copy()).setLastSendAt(System.currentTimeMillis());
-                retryMap.put(optId, retryMsg);
-                ackMap.put(optId, AckResult.of(ackLatch));
+                RetryMsg retryMsg = new BufRetryMsg().setBuf(fileReconstructListFrame.copy()).setIp(ip).setPort(port).setLastSendAt(System.currentTimeMillis());
+                senderContext.retryMap.put(optId, retryMsg);
+                senderContext.ackMap.put(optId, AckResult.of(ackLatch));
 
                 log.info("[Sender]send file reconstruct byte serial. fid:{}, serial size:{}", modifiedFile.getFid(), serial.getContent().length);
                 channel.writeAndFlush(fileReconstructListFrame);
@@ -415,15 +414,15 @@ public class DefaultSenderImpl implements Sender {
                     String optId = UUIDUtils.randomUUID();
                     ByteBuf fileReconstructFrame = Unpooled.buffer();
                     fileReconstructFrame.writeCharSequence(NetworkConstants.FRAME_HEAD, StandardCharsets.UTF_8);
-                    fileReconstructFrame.writeInt(OptCodeEnums.FILE_RECONSTRUCT_LIST_TRANSPORT_FINISH.getValue());
+                    fileReconstructFrame.writeInt(OptCodeEnums.FILE_RECONSTRUCT.getValue());
                     fileReconstructFrame.writeCharSequence(contextId, StandardCharsets.UTF_8);
                     fileReconstructFrame.writeCharSequence(optId, StandardCharsets.UTF_8);
                     fileReconstructFrame.writeCharSequence(modifiedFile.getFid(), StandardCharsets.UTF_8);
                     fileReconstructFrame.writeLong(Crc32Utils.computeCrc32(fileReconstructFrame.array()));
                     fileReconstructFrame.writeCharSequence(NetworkConstants.FRAME_TAIL, StandardCharsets.UTF_8);
 
-                    RetryMsg retryMsg = new RetryMsg().setIp(ip).setPort(port).setBuf(fileReconstructFrame.copy()).setLastSendAt(System.currentTimeMillis());
-                    retryMap.put(optId, retryMsg);
+                    RetryMsg retryMsg = new BufRetryMsg().setBuf(fileReconstructFrame.copy()).setIp(ip).setPort(port).setLastSendAt(System.currentTimeMillis());
+                    senderContext.retryMap.put(optId, retryMsg);
 
                     log.info("[Sender]send file reconstruct cmd.fid:{}", modifiedFile.getFid());
                     channel.writeAndFlush(fileReconstructFrame);
@@ -440,7 +439,8 @@ public class DefaultSenderImpl implements Sender {
 
     @Override
     public void processFileReconstructListAck(OperationBaseFrame opt) {
-        AckResult ackResult = ackMap.remove(opt.getOptId());
+        log.info("[Sender]receive file reconstruct ack:{}", opt);
+        AckResult ackResult = senderContext.ackMap.remove(opt.getOptId());
         if (Objects.nonNull(ackResult)) {
             ackResult.getLatch().countDown();
         }

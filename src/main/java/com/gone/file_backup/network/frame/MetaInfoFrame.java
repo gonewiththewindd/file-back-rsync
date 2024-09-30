@@ -1,8 +1,7 @@
 package com.gone.file_backup.network.frame;
 
 import com.gone.file_backup.model.FileMetaInfo;
-import com.gone.file_backup.network.NetworkConstants;
-import com.gone.file_backup.network.OptCodeEnums;
+import com.gone.file_backup.constants.NetworkConstants;
 import io.netty.buffer.ByteBuf;
 import lombok.Data;
 import lombok.experimental.Accessors;
@@ -21,8 +20,8 @@ public class MetaInfoFrame extends OperationBaseFrame {
     private String destPath;
     private String md5;
 
-    private MetaInfoFrame() {
-        super.optCode = OptCodeEnums.FILE_META_INFO;
+    public MetaInfoFrame() {
+
     }
 
     public static MetaInfoFrame of(FileMetaInfo fileMetaInfo) {
@@ -59,8 +58,9 @@ public class MetaInfoFrame extends OperationBaseFrame {
                 .setLength(fileLength)
                 .setDestPath(destPath.toString())
                 .setMd5(md5.toString());
-        metaInfoOpt.setOptId(contextId.toString());
-        metaInfoOpt.setContextId(optId.toString());
+        metaInfoOpt.setOptCode(optCode);
+        metaInfoOpt.setContextId(contextId.toString());
+        metaInfoOpt.setOptId(optId.toString());
         metaInfoOpt.setCrc(crc);
 
         return metaInfoOpt;
